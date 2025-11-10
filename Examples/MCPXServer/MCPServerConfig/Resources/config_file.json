@@ -1,0 +1,9 @@
+{
+    "uri": "file://config",
+    "name": "配置文件",
+    "description": "服务器配置信息",
+    "mimeType": "text/plain",
+    "type": "file",
+    "filePath": "MCPServerConfig/Resources/config.txt"
+}
+

@@ -1,0 +1,61 @@
+{
+    "name": "calculator",
+    "title": "计算器",
+    "description": "支持基本数学运算的计算器工具（加、减、乘、除）",
+    "execHandler": "MyExampleHandler",
+    "execMethod": "calculateOperation",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "a": {
+                "type": "number",
+                "description": "第一个数字"
+            },
+            "b": {
+                "type": "number",
+                "description": "第二个数字"
+            },
+            "operation": {
+                "type": "string",
+                "description": "操作类型",
+                "enum": ["add", "subtract", "multiply", "divide"]
+            }
+        },
+        "required": ["a", "b", "operation"]
+    },
+    "outputSchema": {
+        "type": "object",
+        "description": "计算器操作结果",
+        "properties": {
+            "operands": {
+                "type": "array",
+                "description": "参与运算的操作数",
+                "items": {
+                    "type": "number"
+                }
+            },
+            "operation": {
+                "type": "string",
+                "description": "执行的操作"
+            },
+            "result": {
+                "type": "number",
+                "description": "计算结果"
+            },
+            "success": {
+                "type": "boolean",
+                "description": "操作是否成功"
+            },
+            "timestamp": {
+                "type": "string",
+                "description": "操作时间戳"
+            }
+        },
+        "required": ["operands", "operation", "result", "success", "timestamp"]
+    },
+    "annotations": {
+        "audience": ["user", "assistant"],
+        "priority": 0.8,
+        "lastModified": "2025-01-12T15:00:58Z"
+    }
+}

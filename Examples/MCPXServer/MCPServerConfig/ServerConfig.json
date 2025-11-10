@@ -1,0 +1,10 @@
+{
+    "port": 5555,
+    "serverInfo": {
+        "name": "MCPXServer",
+        "title": "MCP X Server Example",
+        "version": "1.0.0"
+    },
+    "instructions": "这是一个示例 MCP 服务器，展示了如何使用配置文件自动启动服务器。"
+}
+

@@ -1,0 +1,9 @@
+{
+    "uri": "system://info",
+    "name": "系统信息",
+    "description": "提供服务器系统信息",
+    "mimeType": "application/json",
+    "type": "content",
+    "content": "{\"platform\":\"Windows\",\"version\":\"10\",\"hostname\":\"localhost\",\"timestamp\":\"\"}"
+}
+

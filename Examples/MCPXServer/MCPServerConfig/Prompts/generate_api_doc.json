@@ -1,0 +1,18 @@
+{
+    "name": "generate_api_doc",
+    "description": "为函数生成API文档",
+    "arguments": [
+        {
+            "name": "function_name",
+            "description": "函数名",
+            "required": true
+        },
+        {
+            "name": "parameters",
+            "description": "参数列表",
+            "required": false
+        }
+    ],
+    "template": "请为函数 {{function_name}} 生成详细的API文档。\n\n函数名：{{function_name}}\n参数：{{parameters}}\n\n请包含：\n1. 功能描述\n2. 参数说明\n3. 返回值说明\n4. 使用示例"
+}
+

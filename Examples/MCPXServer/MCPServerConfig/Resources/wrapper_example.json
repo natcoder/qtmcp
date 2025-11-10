@@ -1,0 +1,9 @@
+{
+    "uri": "wrapper://example",
+    "name": "包装资源示例",
+    "description": "通过MCPResourceWrapper包装QObject对象，每5秒自动更新内容",
+    "mimeType": "application/json",
+    "type": "wrapper",
+    "handlerName": "MyResourceHandler"
+}
+

@@ -1,0 +1,9 @@
+{
+    "uri": "wrapper://dynamic",
+    "name": "动态资源",
+    "description": "动态变化的资源示例，展示资源变化通知功能",
+    "mimeType": "application/json",
+    "type": "wrapper",
+    "handlerName": "MyResourceHandler"
+}
+
