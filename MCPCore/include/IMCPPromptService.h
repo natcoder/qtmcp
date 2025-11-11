@@ -28,6 +28,10 @@
  * 编码规范：
  * - 接口方法使用纯虚函数
  * - { 和 } 要单独一行
+ * 
+ * @note 死锁风险说明：在服务运行过程中调用addFromJson等方法添加提示词时，
+ *       如果调用方与相关对象在同一线程，可能导致死锁。此问题目前暂时不处理，
+ *       建议在服务初始化阶段完成提示词添加操作。
  */
 class MCPCORE_EXPORT IMCPPromptService : public QObject
 {
@@ -104,6 +108,44 @@ public:
      * @return 提示词内容（JSON对象格式）
      */
     virtual QJsonObject getPrompt(const QString& strName, const QMap<QString, QString>& arguments) = 0;
+    
+    /**
+     * @brief 从JSON对象添加提示词
+     * @param jsonPrompt JSON对象，包含提示词的配置信息
+     * @return true表示注册成功，false表示失败
+     * 
+     * JSON对象格式：
+     * {
+     *   "name": "提示词名称",
+     *   "description": "提示词描述",
+     *   "template": "提示词模板字符串，支持 {{变量名}} 格式的占位符",
+     *   "arguments": [
+     *     {
+     *       "name": "参数名",
+     *       "description": "参数描述",
+     *       "required": true/false
+     *     },
+     *     ...
+     *   ]
+     * }
+     * 
+     * 使用示例：
+     * @code
+     * QJsonObject json;
+     * json["name"] = "greeting";
+     * json["description"] = "问候提示词";
+     * json["template"] = "Hello {{name}}, welcome!";
+     * QJsonArray args;
+     * QJsonObject arg;
+     * arg["name"] = "name";
+     * arg["description"] = "用户名";
+     * arg["required"] = true;
+     * args.append(arg);
+     * json["arguments"] = args;
+     * pPromptService->addFromJson(json);
+     * @endcode
+     */
+    virtual bool addFromJson(const QJsonObject& jsonPrompt) = 0;
     
 signals:
     /**

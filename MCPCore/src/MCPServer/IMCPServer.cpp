@@ -9,6 +9,7 @@
 #include "IMCPServer.h"
 #include "Application/MCPAutoServer.h"
 #include "MCPServer/MCPServer.h"
+#include "MCPInvokeHelper.h"
 
 IMCPServer::IMCPServer(QObject* pParent)
     : QObject(pParent)
@@ -36,12 +37,20 @@ IMCPServer::~IMCPServer()
 {
 }
 
+//
 static MCPAutoServer autoServer;
 void StartAutoMCPServer()
 {
 	autoServer.performStart();
 }
+void LoadAutoMCPServerTool(const char* szToolConfigFile)
+{
+	auto strConfigFile = QString::fromUtf8(szToolConfigFile);
+	autoServer.loadTool(strConfigFile);
+}
 void StopAutoMCPServer()
 {
 	autoServer.performStop();
 }
+
+

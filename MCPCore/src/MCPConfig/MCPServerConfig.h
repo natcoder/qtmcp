@@ -12,16 +12,13 @@
 #include <QMap>
 
 class IMCPServer;
-class MCPToolsConfig;
-class MCPResourcesConfig;
-class MCPPromptsConfig;
 
 /**
  * @brief MCP X服务器配置实现类
  * 
  * 职责：
- * - 管理服务器配置（端口、服务器信息、工具等）
- * - 加载/保存配置文件
+ * - 管理服务器配置（端口、服务器信息等）
+ * - 加载配置文件
  * - 应用配置到Server
  * 
  * 编码规范：
@@ -43,7 +40,6 @@ public:
     // ============ 配置加载/保存 ============
     
     bool loadFromDirectory(const QString& strConfigDir) override;
-    bool saveToDirectory(const QString& strConfigDir) const override;
     
 public:
     // ============ 配置访问 ============
@@ -76,9 +72,6 @@ private:
     QString m_strServerTitle;
     QString m_strServerVersion;
     QString m_strInstructions;
-    MCPToolsConfig* m_pToolsConfig;
-    MCPResourcesConfig* m_pResourcesConfig;
-    MCPPromptsConfig* m_pPromptsConfig;
 private:
     friend class MCPServer;
 };

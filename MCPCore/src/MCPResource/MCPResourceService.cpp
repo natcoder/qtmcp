@@ -10,11 +10,12 @@
 #include "MCPResource.h"
 #include "MCPContentResource.h"
 #include "MCPFileResource.h"
+#include "MCPResourceWrapper.h"
 #include "MCPLog.h"
 #include "Utils/MCPInvokeHelper.h"
+#include "MCPConfig/MCPResourcesConfig.h"
+#include "Utils/MCPHandlerResolver.h"
 #include <QSet>
-#include <QFile>
-#include <QFileInfo>
 #include "Utils/MCPResourceContentGenerator.h"
 
 MCPResourceService::MCPResourceService(QObject* pParent)
@@ -46,7 +47,7 @@ bool MCPResourceService::add(const QString& strUri,
 {
     return MCPInvokeHelper::syncInvokeReturn(this, [this, strUri, strName, strDescription, strMimeType, contentProvider]()
     {
-        return doAddImpl(strUri, strName, strDescription, strMimeType, contentProvider);
+        return doAddImpl(strUri, strName, strDescription, strMimeType, contentProvider) != nullptr;
     });
 }
 
@@ -58,16 +59,17 @@ bool MCPResourceService::add(const QString& strUri,
 {
     return MCPInvokeHelper::syncInvokeReturn(this, [this, strUri, strName, strDescription, strFilePath, strMimeType]()
     {
-        return doAddImpl(strUri, strName, strDescription, strFilePath, strMimeType);
+        return doAddImpl(strUri, strName, strDescription, strFilePath, strMimeType) != nullptr;
     });
 }
 
 bool MCPResourceService::registerResource(const QString& strUri, MCPResource* pResource)
 {
+    // 如果已存在，先删除旧的（覆盖），不发送信号，因为后面注册新对象时会发送
     if (m_dictResources.contains(strUri))
     {
-        MCP_CORE_LOG_WARNING() << "MCPResourceService: 资源已存在:" << strUri;
-        return false;
+        MCP_CORE_LOG_INFO() << "MCPResourceService: 资源已存在，覆盖旧资源:" << strUri;
+        doRemoveImpl(strUri, false);
     }
     
     m_dictResources[strUri] = pResource;
@@ -129,11 +131,178 @@ QJsonObject MCPResourceService::readResource(const QString& strUri)
     return objResult;
 }
 
-bool MCPResourceService::doAddImpl(const QString& strUri,
-                                   const QString& strName,
-                                   const QString& strDescription,
-                                   const QString& strMimeType,
-                                   std::function<QString()> contentProvider)
+bool MCPResourceService::addFromJson(const QJsonObject& jsonResource, QObject* pSearchRoot)
+{
+    return MCPInvokeHelper::syncInvokeReturn(this, [this, jsonResource, pSearchRoot]()
+    {
+        // 将JSON对象转换为MCPResourceConfig
+        MCPResourceConfig resourceConfig = MCPResourceConfig::fromJson(jsonResource);
+        
+        // 如果提供了pSearchRoot，先解析handlers；否则传递空map，让addFromConfig从qApp搜索
+        QMap<QString, QObject*> dictHandlers;
+        if (pSearchRoot)
+        {
+            dictHandlers = MCPHandlerResolver::resolveHandlers(pSearchRoot);
+        }
+        
+        return addFromConfig(resourceConfig, dictHandlers);
+    });
+}
+
+bool MCPResourceService::addFromConfig(const MCPResourceConfig& resourceConfig, const QMap<QString, QObject*>& dictHandlers)
+{
+    // 根据资源类型调用对应的处理方法
+    if (resourceConfig.strType == "file")
+    {
+        return addFileResourceFromConfig(resourceConfig);
+    }
+    else if (resourceConfig.strType == "wrapper")
+    {
+        return addWrapperResourceFromConfig(resourceConfig, dictHandlers);
+    }        
+    return addContentResourceFromConfig(resourceConfig);
+}
+
+bool MCPResourceService::addFileResourceFromConfig(const MCPResourceConfig& resourceConfig)
+{
+    // 验证文件路径
+    if (resourceConfig.strFilePath.isEmpty())
+    {
+        MCP_CORE_LOG_WARNING() << "MCPResourceService: 文件资源配置无效（缺少filePath）:" 
+                               << resourceConfig.strUri;
+        return false;
+    }
+    
+    // 使用文件路径方式（支持自动MIME类型推断和二进制文件）
+    MCPResource* pResource = doAddImpl(
+        resourceConfig.strUri,
+        resourceConfig.strName,
+        resourceConfig.strDescription,
+        resourceConfig.strFilePath,
+        resourceConfig.strMimeType.isEmpty() ? QString() : resourceConfig.strMimeType);
+    
+    // 应用annotations（如果存在）
+    if (pResource != nullptr)
+    {
+        applyAnnotationsIfNeeded(pResource, resourceConfig.annotations);
+    }
+    
+    return pResource != nullptr;
+}
+
+bool MCPResourceService::addWrapperResourceFromConfig(const MCPResourceConfig& resourceConfig, const QMap<QString, QObject*>& dictHandlers)
+{
+    // 验证Handler名称
+    if (resourceConfig.strHandlerName.isEmpty())
+    {
+        MCP_CORE_LOG_WARNING() << "MCPResourceService: 包装资源配置无效（缺少handlerName）:" 
+                               << resourceConfig.strUri;
+        return false;
+    }
+    
+    // 从dictHandlers映射表中查找Handler，如果dictHandlers为空则从qApp搜索
+    QObject* pHandler = nullptr;
+    if (!dictHandlers.isEmpty())
+    {
+        pHandler = dictHandlers.value(resourceConfig.strHandlerName, nullptr);
+    }
+    else
+    {
+        pHandler = MCPHandlerResolver::findHandler(resourceConfig.strHandlerName, nullptr);
+    }
+    
+    if (pHandler == nullptr)
+    {
+        MCP_CORE_LOG_WARNING() << "MCPResourceService: 资源Handler未找到:" << resourceConfig.strHandlerName
+                               << ", 资源URI:" << resourceConfig.strUri;
+        return false;
+    }
+    
+    // 创建MCPResourceWrapper
+    MCPResourceWrapper* pWrapper = MCPResourceWrapper::create(
+        resourceConfig.strUri,
+        pHandler,
+        this);
+    
+    if (pWrapper == nullptr)
+    {
+        MCP_CORE_LOG_WARNING() << "MCPResourceService: 创建资源包装器失败:" << resourceConfig.strUri
+                               << ", Handler:" << resourceConfig.strHandlerName;
+        return false;
+    }
+    
+    // 设置资源元数据
+    pWrapper->setName(resourceConfig.strName);
+    pWrapper->setDescription(resourceConfig.strDescription);
+    if (!resourceConfig.strMimeType.isEmpty())
+    {
+        pWrapper->setMimeType(resourceConfig.strMimeType);
+    }
+    
+    // 注册资源
+    bool bSuccess = registerResource(resourceConfig.strUri, pWrapper);
+    
+    // 应用annotations（如果存在）
+    if (bSuccess)
+    {
+        applyAnnotationsIfNeeded(pWrapper, resourceConfig.annotations);
+    }
+    
+    return bSuccess;
+}
+
+bool MCPResourceService::addContentResourceFromConfig(const MCPResourceConfig& resourceConfig)
+{
+    // 验证内容
+    if (resourceConfig.strContent.isEmpty())
+    {
+        MCP_CORE_LOG_WARNING() << "MCPResourceService: 内容资源配置无效（缺少content）:" 
+                               << resourceConfig.strUri;
+        return false;
+    }
+    
+    // 使用静态内容方式
+    QString strContent = resourceConfig.strContent;
+    std::function<QString()> contentProvider = [strContent]() { return strContent; };
+    
+    MCPResource* pResource = doAddImpl(
+        resourceConfig.strUri,
+        resourceConfig.strName,
+        resourceConfig.strDescription,
+        resourceConfig.strMimeType.isEmpty() ? "text/plain" : resourceConfig.strMimeType,
+        contentProvider);
+    
+    // 应用annotations（如果存在）
+    if (pResource != nullptr)
+    {
+        applyAnnotationsIfNeeded(pResource, resourceConfig.annotations);
+    }
+    
+    return pResource != nullptr;
+}
+
+bool MCPResourceService::applyAnnotationsIfNeeded(MCPResource* pResource, const QJsonObject& annotations)
+{
+    if (annotations.isEmpty())
+    {
+        return true;  // 没有annotations，直接返回成功
+    }
+    
+    if (pResource == nullptr)
+    {
+        MCP_CORE_LOG_WARNING() << "MCPResourceService: 无法应用annotations，资源对象为空";
+        return false;
+    }
+    
+    pResource->setAnnotations(annotations);
+    return true;
+}
+
+MCPResource* MCPResourceService::doAddImpl(const QString& strUri,
+                                           const QString& strName,
+                                           const QString& strDescription,
+                                           const QString& strMimeType,
+                                           std::function<QString()> contentProvider)
 {
     // 创建资源对象（父对象设为this）
     MCPContentResource* pResource = new MCPContentResource(strUri, this);
@@ -143,22 +312,21 @@ bool MCPResourceService::doAddImpl(const QString& strUri,
         ->withContentProvider(contentProvider);
     
     // 注册到服务
-    bool bSuccess = registerResource(strUri, pResource);
-    
-    // 如果注册失败，删除Resource对象避免内存泄漏
-    if (!bSuccess)
+    if (!registerResource(strUri, pResource))
     {
+        // 如果注册失败，删除Resource对象避免内存泄漏
         pResource->deleteLater();
+        return nullptr;
     }
     
-    return bSuccess;
+    return pResource;
 }
 
-bool MCPResourceService::doAddImpl(const QString& strUri,
-                                   const QString& strName,
-                                   const QString& strDescription,
-                                   const QString& strFilePath,
-                                   const QString& strMimeType)
+MCPResource* MCPResourceService::doAddImpl(const QString& strUri,
+                                           const QString& strName,
+                                           const QString& strDescription,
+                                           const QString& strFilePath,
+                                           const QString& strMimeType)
 {
     // 创建文件资源对象（父对象设为this）
     MCPFileResource* pResource = new MCPFileResource(strUri, strFilePath, strName, this);
@@ -171,18 +339,17 @@ bool MCPResourceService::doAddImpl(const QString& strUri,
     }
     
     // 注册到服务
-    bool bSuccess = registerResource(strUri, pResource);
-    
-    // 如果注册失败，删除Resource对象避免内存泄漏
-    if (!bSuccess)
+    if (!registerResource(strUri, pResource))
     {
+        // 如果注册失败，删除Resource对象避免内存泄漏
         pResource->deleteLater();
+        return nullptr;
     }
     
-    return bSuccess;
+    return pResource;
 }
 
-bool MCPResourceService::doRemoveImpl(const QString& strUri)
+bool MCPResourceService::doRemoveImpl(const QString& strUri, bool bEmitSignal)
 {
     if (!m_dictResources.contains(strUri))
     {
@@ -197,8 +364,11 @@ bool MCPResourceService::doRemoveImpl(const QString& strUri)
     }
     
     MCP_CORE_LOG_INFO() << "MCPResourceService: 资源已注销:" << strUri;
-    emit resourceDeleted(strUri);  // 通知订阅者资源已删除（订阅机制）
-    emit resourcesListChanged();    // 通知所有客户端（广播通知）
+    if (bEmitSignal)
+    {
+        emit resourceDeleted(strUri);  // 通知订阅者资源已删除（订阅机制）
+        emit resourcesListChanged();    // 通知所有客户端（广播通知）
+    }
     return true;
 }
 

@@ -8,6 +8,7 @@
 
 #include "MCPServer.h"
 #include <QJsonDocument>
+#include <QJsonParseError>
 #include <QThread>
 #include <QEventLoop>
 #include <QMetaObject>
@@ -27,10 +28,10 @@
 #include "MCPMessage/MCPServerMessage.h"
 #include "MCPTransport/MCPHttpTransport/impl/MCPHttpReplyMessage.h"
 #include "MCPConfig/MCPServerConfig.h"
-#include "MCPRouting/MCPContext.h"
 #include "MCPConfig/MCPToolsConfig.h"
 #include "MCPConfig/MCPResourcesConfig.h"
 #include "MCPConfig/MCPPromptsConfig.h"
+#include "MCPRouting/MCPContext.h"
 #include "MCPServerHandler.h"
 #include "IMCPToolService.h"
 #include "IMCPResourceService.h"
@@ -72,6 +73,10 @@ MCPServer::MCPServer(QObject* pParent)
 	// 连接提示词服务的信号到业务处理器（MCPServerHandler内部会转发到对应的子Handler）
 	QObject::connect(m_pPromptService, &MCPPromptService::promptsListChanged,
 		m_pHandler, &MCPServerHandler::onPromptsListChanged);
+	
+	// 连接配置加载完成信号到配置应用槽（传递配置数据）
+	QObject::connect(m_pConfig, &MCPServerConfig::configLoaded,
+		this, &MCPServer::onConfigLoaded);
 
 	m_pThread->setObjectName("MCPServer-WorkerThread");
 	MCP_CORE_LOG_INFO() << "MCPServer: 服务器组件初始化完成";
@@ -146,9 +151,6 @@ MCPSessionService* MCPServer::getSessionService() const
 
 bool MCPServer::doStart()
 {
-	// 应用配置
-	initServer();
-	
 	// 启动传输层
 	auto nPort = m_pConfig->getPort();
 	if (!m_pTransport->start(nPort))
@@ -169,186 +171,62 @@ bool MCPServer::doStop()
 	return true;
 }
 
-bool MCPServer::initServer()
+bool MCPServer::initServer(QSharedPointer<MCPToolsConfig> pToolsConfig,
+                           QSharedPointer<MCPResourcesConfig> pResourcesConfig,
+                           QSharedPointer<MCPPromptsConfig> pPromptsConfig)
 {
 	int nToolsApplied = 0;
 	int nResourcesApplied = 0;
 	int nPromptsApplied = 0;
-	// 应用工具配置
-	auto dictHandlers = MCPHandlerResolver::resolveHandlers();
-		for (const auto& toolConfig : m_pConfig->m_pToolsConfig->getTools())
+	
+	// 预先解析所有Handlers（一次性解析，避免重复遍历对象树）
+	QMap<QString, QObject*> dictHandlers = MCPHandlerResolver::resolveHandlers(qApp);
+	
+	// 1. 应用工具配置
+	if (pToolsConfig)
 	{
-		auto pHandler = dictHandlers.value(toolConfig.strExecHandler, nullptr);
-		if (pHandler != nullptr)
+		for (const auto& toolConfig : pToolsConfig->getTools())
 		{
-			bool bSuccess = m_pToolService->add(toolConfig.strName, toolConfig.strTitle, toolConfig.strDescription,
-				toolConfig.jsonInputSchema, toolConfig.jsonOutputSchema,
-				pHandler, toolConfig.strExecMethod);
-			
-			// 如果配置中包含 annotations，设置到工具中
-			if (bSuccess && !toolConfig.annotations.isEmpty())
-			{
-				MCPTool* pTool = m_pToolService->getTool(toolConfig.strName);
-				if (pTool)
-				{
-					pTool->withAnnotations(toolConfig.annotations);
-				}
-			}
-			
-			if (bSuccess)
+			if (m_pToolService->addFromConfig(toolConfig, dictHandlers))
 			{
 				nToolsApplied++;
 			}
-		}
-		else
-		{
-			MCP_CORE_LOG_WARNING() << "MCPServer: 工具配置的Handler未找到:" << toolConfig.strExecHandler
-								   << ", 工具:" << toolConfig.strName;
+			else
+			{
+				MCP_CORE_LOG_WARNING() << "MCPServer: 工具配置注册失败:" << toolConfig.strName;
+			}
 		}
 	}
-
-	// 应用资源配置
-	for (const auto& resourceConfig : m_pConfig->m_pResourcesConfig->getResources())
+	
+	// 2. 应用资源配置
+	if (pResourcesConfig)
 	{
-		bool bSuccess = false;
-		QString strType = resourceConfig.strType.isEmpty() ? "content" : resourceConfig.strType;
-		
-		if (strType == "file")
+		for (const auto& resourceConfig : pResourcesConfig->getResources())
 		{
-			// 文件资源类型
-			if (resourceConfig.strFilePath.isEmpty())
+			if (m_pResourceService->addFromConfig(resourceConfig, dictHandlers))
 			{
-				MCP_CORE_LOG_WARNING() << "MCPServer: 文件资源配置无效（缺少filePath）:" 
-									   << resourceConfig.strUri;
-				continue;
+				nResourcesApplied++;
 			}
-			
-			// 使用文件路径方式（支持自动MIME类型推断和二进制文件）
-			bSuccess = m_pResourceService->add(
-				resourceConfig.strUri,
-				resourceConfig.strName,
-				resourceConfig.strDescription,
-				resourceConfig.strFilePath,
-				resourceConfig.strMimeType.isEmpty() ? QString() : resourceConfig.strMimeType);
-			
-			// 如果配置中包含 annotations，设置到资源中
-			if (bSuccess && !resourceConfig.annotations.isEmpty())
+			else
 			{
-				MCPResource* pResource = m_pResourceService->getResource(resourceConfig.strUri);
-				if (pResource)
-				{
-					pResource->setAnnotations(resourceConfig.annotations);
-				}
+				MCP_CORE_LOG_WARNING() << "MCPServer: 资源配置注册失败:" << resourceConfig.strUri;
 			}
-		}
-		else if (strType == "wrapper")
-		{
-			// 包装资源类型
-			if (resourceConfig.strHandlerName.isEmpty())
-			{
-				MCP_CORE_LOG_WARNING() << "MCPServer: 包装资源配置无效（缺少handlerName）:" 
-									   << resourceConfig.strUri;
-				continue;
-			}
-			
-			// 查找资源Handler对象
-			QObject* pHandler = MCPHandlerResolver::findHandler(resourceConfig.strHandlerName);
-			if (pHandler == nullptr)
-			{
-				MCP_CORE_LOG_WARNING() << "MCPServer: 资源Handler未找到:" << resourceConfig.strHandlerName
-									   << ", 资源URI:" << resourceConfig.strUri;
-				continue;
-			}
-			
-			// 创建MCPResourceWrapper
-			MCPResourceWrapper* pWrapper = MCPResourceWrapper::create(
-				resourceConfig.strUri,
-				pHandler,
-				m_pResourceService);
-			
-			if (pWrapper == nullptr)
-			{
-				MCP_CORE_LOG_WARNING() << "MCPServer: 创建资源包装器失败:" << resourceConfig.strUri
-									   << ", Handler:" << resourceConfig.strHandlerName;
-				continue;
-			}
-			
-			// 注册资源
-			bSuccess = m_pResourceService->registerResource(resourceConfig.strUri, pWrapper);
-			
-			// 如果配置中包含 annotations，设置到资源中
-			if (bSuccess && !resourceConfig.annotations.isEmpty())
-			{
-				pWrapper->setAnnotations(resourceConfig.annotations);
-			}
-		}
-		else
-		{
-			// 内容资源类型（默认）
-			if (resourceConfig.strContent.isEmpty())
-			{
-				MCP_CORE_LOG_WARNING() << "MCPServer: 内容资源配置无效（缺少content）:" 
-									   << resourceConfig.strUri;
-				continue;
-			}
-			
-			// 使用静态内容方式
-			QString strContent = resourceConfig.strContent;
-			std::function<QString()> contentProvider = [strContent]() { return strContent; };
-			
-			bSuccess = m_pResourceService->add(
-				resourceConfig.strUri,
-				resourceConfig.strName,
-				resourceConfig.strDescription,
-				resourceConfig.strMimeType.isEmpty() ? "text/plain" : resourceConfig.strMimeType,
-				contentProvider);
-			
-			// 如果配置中包含 annotations，设置到资源中
-			if (bSuccess && !resourceConfig.annotations.isEmpty())
-			{
-				MCPResource* pResource = m_pResourceService->getResource(resourceConfig.strUri);
-				if (pResource)
-				{
-					pResource->setAnnotations(resourceConfig.annotations);
-				}
-			}
-		}
-		
-		if (bSuccess)
-		{
-			nResourcesApplied++;
-		}
-		else
-		{
-			MCP_CORE_LOG_WARNING() << "MCPServer: 资源配置注册失败:" << resourceConfig.strUri;
 		}
 	}
-
-	// 应用提示词配置
-	for (const auto& promptConfig : m_pConfig->m_pPromptsConfig->getPrompts())
+	
+	// 3. 应用提示词配置
+	if (pPromptsConfig)
 	{
-		// 转换参数格式
-		QList<QPair<QString, QPair<QString, bool>>> arguments;
-		for (const MCPPromptArgumentConfig& arg : promptConfig.listArguments)
+		for (const auto& promptConfig : pPromptsConfig->getPrompts())
 		{
-			arguments.append(qMakePair(
-				arg.strName,
-				qMakePair(arg.strDescription, arg.bRequired)
-			));
-		}
-		
-		// 使用模板方式注册（会自动使用默认的模板替换生成器）
-		if (m_pPromptService->add(
-			promptConfig.strName,
-			promptConfig.strDescription,
-			arguments,
-			promptConfig.strTemplate))
-		{
-			nPromptsApplied++;
-		}
-		else
-		{
-			MCP_CORE_LOG_WARNING() << "MCPServer: 提示词配置注册失败:" << promptConfig.strName;
+			if (m_pPromptService->addFromConfig(promptConfig))
+			{
+				nPromptsApplied++;
+			}
+			else
+			{
+				MCP_CORE_LOG_WARNING() << "MCPServer: 提示词配置注册失败:" << promptConfig.strName;
+			}
 		}
 	}
 
@@ -362,4 +240,12 @@ bool MCPServer::initServer()
 void MCPServer::onThreadReady()
 {
 	// 空实现，仅用于确保工作线程事件循环已启动
+}
+
+void MCPServer::onConfigLoaded(QSharedPointer<MCPToolsConfig> pToolsConfig,
+                               QSharedPointer<MCPResourcesConfig> pResourcesConfig,
+                               QSharedPointer<MCPPromptsConfig> pPromptsConfig)
+{
+	// 配置加载完成，应用配置
+	initServer(pToolsConfig, pResourcesConfig, pPromptsConfig);
 }

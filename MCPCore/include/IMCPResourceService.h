@@ -25,6 +25,10 @@
  * 编码规范：
  * - 接口方法使用纯虚函数
  * - { 和 } 要单独一行
+ * 
+ * @note 死锁风险说明：在服务运行过程中调用addFromJson等方法添加wrapper类型资源时，
+ *       如果调用方与包装对象在同一线程，可能导致死锁。此问题目前暂时不处理，
+ *       建议在服务初始化阶段完成资源添加操作。
  */
 class MCPCORE_EXPORT IMCPResourceService : public QObject
 {
@@ -107,6 +111,37 @@ public:
      * @return 资源内容（JSON对象格式）
      */
     virtual QJsonObject readResource(const QString& strUri) = 0;
+    
+    /**
+     * @brief 从JSON对象添加资源
+     * @param jsonResource JSON对象，包含资源的配置信息
+     * @param pSearchRoot 搜索Handler的根对象，默认为nullptr（使用qApp）
+     * @return true表示注册成功，false表示失败
+     * 
+     * JSON对象格式：
+     * {
+     *   "uri": "资源URI",
+     *   "name": "资源名称",
+     *   "description": "资源描述",
+     *   "mimeType": "MIME类型（可选，默认text/plain）",
+     *   "type": "资源类型：file/wrapper/content（可选，默认content）",
+     *   "filePath": "文件路径（file类型必需）",
+     *   "content": "静态内容（content类型必需）",
+     *   "handlerName": "Handler名称（wrapper类型必需）",
+     *   "annotations": { ... }（可选）
+     * }
+     * 
+     * 使用示例：
+     * @code
+     * QJsonObject json;
+     * json["uri"] = "file:///path/to/file";
+     * json["name"] = "My File";
+     * json["type"] = "file";
+     * json["filePath"] = "/path/to/file.txt";
+     * pResourceService->addFromJson(json);
+     * @endcode
+     */
+    virtual bool addFromJson(const QJsonObject& jsonResource, QObject* pSearchRoot = nullptr) = 0;
     
 signals:
     /**

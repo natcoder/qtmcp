@@ -24,6 +24,10 @@
  * 编码规范：
  * - 接口方法使用纯虚函数
  * - { 和 } 要单独一行
+ * 
+ * @note 死锁风险说明：在服务运行过程中调用addFromJson等方法添加工具时，
+ *       如果调用方与Handler对象在同一线程，可能导致死锁。此问题目前暂时不处理，
+ *       建议在服务初始化阶段完成工具添加操作。
  */
 class MCPCORE_EXPORT IMCPToolService : public QObject
 {
@@ -100,6 +104,36 @@ public:
      * @return 工具列表（JSON数组格式）
      */
     virtual QJsonArray list() const = 0;
+    
+    /**
+     * @brief 从JSON对象添加工具
+     * @param jsonTool JSON对象，包含工具的配置信息
+     * @param pSearchRoot 搜索Handler的根对象，默认为nullptr（使用qApp）
+     * @return true表示注册成功，false表示失败
+     * 
+     * JSON对象格式：
+     * {
+     *   "name": "工具名称",
+     *   "title": "工具标题",
+     *   "description": "工具描述",
+     *   "inputSchema": { ... },
+     *   "outputSchema": { ... },
+     *   "execHandler": "Handler名称",
+     *   "execMethod": "处理方法名",
+     *   "annotations": { ... }（可选）
+     * }
+     * 
+     * 使用示例：
+     * @code
+     * QJsonObject json;
+     * json["name"] = "myTool";
+     * json["title"] = "My Tool";
+     * json["execHandler"] = "MyHandler";
+     * json["execMethod"] = "execute";
+     * pToolService->addFromJson(json);
+     * @endcode
+     */
+    virtual bool addFromJson(const QJsonObject& jsonTool, QObject* pSearchRoot = nullptr) = 0;
     
 signals:
     /**

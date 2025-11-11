@@ -20,6 +20,9 @@ class MCPThreadPool;
 class MCPServerMessage;
 class MCPServerConfig;
 class MCPServerHandler;
+class MCPToolsConfig;
+class MCPResourcesConfig;
+class MCPPromptsConfig;
 /**
  * @brief MCP 服务器实现类
  * 
@@ -96,10 +99,15 @@ public:
 	MCPSessionService* getSessionService() const;
 private slots:
 	void onThreadReady();
+	void onConfigLoaded(QSharedPointer<MCPToolsConfig> pToolsConfig,
+	                   QSharedPointer<MCPResourcesConfig> pResourcesConfig,
+	                   QSharedPointer<MCPPromptsConfig> pPromptsConfig);
 private:
     bool doStart();
     bool doStop();
-	bool initServer();
+	bool initServer(QSharedPointer<MCPToolsConfig> pToolsConfig,
+	               QSharedPointer<MCPResourcesConfig> pResourcesConfig,
+	               QSharedPointer<MCPPromptsConfig> pPromptsConfig);
 private:
     IMCPTransport* m_pTransport;
     MCPSessionService* m_pSessionService;

@@ -15,6 +15,7 @@
 #include "IMCPResourceService.h"
 
 class MCPResource;
+struct MCPResourceConfig;
 
 /**
  * @brief MCP 资源服务实现类
@@ -50,6 +51,8 @@ public:
     bool has(const QString& strUri) const override;
     QJsonArray list(const QString& strUriPrefix = QString()) const override;
     QJsonObject readResource(const QString& strUri) override;
+    
+    bool addFromJson(const QJsonObject& jsonResource, QObject* pSearchRoot = nullptr) override;
     
 public:
     // 内部方法（供内部使用）
@@ -124,26 +127,30 @@ signals:
 private:
     /**
      * @brief 内部方法：实际执行添加资源操作
+     * @return 成功返回资源对象指针，失败返回nullptr
      */
-    bool doAddImpl(const QString& strUri,
-                   const QString& strName,
-                   const QString& strDescription,
-                   const QString& strMimeType,
-                   std::function<QString()> contentProvider);
+    MCPResource* doAddImpl(const QString& strUri,
+                           const QString& strName,
+                           const QString& strDescription,
+                           const QString& strMimeType,
+                           std::function<QString()> contentProvider);
     
     /**
      * @brief 内部方法：实际执行添加资源操作（从文件路径）
+     * @return 成功返回资源对象指针，失败返回nullptr
      */
-    bool doAddImpl(const QString& strUri,
-                   const QString& strName,
-                   const QString& strDescription,
-                   const QString& strFilePath,
-                   const QString& strMimeType);
+    MCPResource* doAddImpl(const QString& strUri,
+                           const QString& strName,
+                           const QString& strDescription,
+                           const QString& strFilePath,
+                           const QString& strMimeType);
     
     /**
      * @brief 内部方法：实际执行删除资源操作
+     * @param strUri 资源URI
+     * @param bEmitSignal 是否发送信号，默认为true
      */
-    bool doRemoveImpl(const QString& strUri);
+    bool doRemoveImpl(const QString& strUri, bool bEmitSignal = true);
     
     /**
      * @brief 内部方法：实际执行检查资源是否存在操作
@@ -159,6 +166,50 @@ private:
      * @brief 内部方法：实际执行读取资源内容操作
      */
     QJsonObject doReadResourceImpl(const QString& strUri);
+    
+    /**
+     * @brief 从配置添加文件资源
+     * @param resourceConfig 资源配置对象
+     * @return true表示注册成功，false表示失败
+     */
+    bool addFileResourceFromConfig(const MCPResourceConfig& resourceConfig);
+    
+    /**
+     * @brief 从配置添加包装资源
+     * @param resourceConfig 资源配置对象
+     * @param dictHandlers Handler名称到对象的映射表，如果为空则从qApp搜索
+     * @return true表示注册成功，false表示失败
+     */
+    bool addWrapperResourceFromConfig(const MCPResourceConfig& resourceConfig, const QMap<QString, QObject*>& dictHandlers = QMap<QString, QObject*>());
+    
+    /**
+     * @brief 从配置添加内容资源
+     * @param resourceConfig 资源配置对象
+     * @return true表示注册成功，false表示失败
+     */
+    bool addContentResourceFromConfig(const MCPResourceConfig& resourceConfig);
+    
+    /**
+     * @brief 如果配置中包含annotations，则应用到资源
+     * @param pResource 资源对象指针
+     * @param annotations 注解对象
+     * @return true表示成功，false表示失败
+     */
+    bool applyAnnotationsIfNeeded(MCPResource* pResource, const QJsonObject& annotations);
+    
+    /**
+     * @brief 从配置对象添加资源（内部方法，供MCPServer使用）
+     * @param resourceConfig 资源配置对象
+     * @param dictHandlers Handler名称到对象的映射表，如果为空则从qApp搜索
+     * @return true表示注册成功，false表示失败
+     * 
+     * @warning 死锁风险：在服务运行过程中调用此方法添加资源时，如果添加的是wrapper类型资源，
+     *          且调用方与包装对象（pWrappedObject）在同一线程，可能导致死锁。
+     *          这是因为创建MCPResourceWrapper时会在构造函数中调用updatePropertiesFromWrappedObject()，
+     *          进而调用包装对象的getMetadata()方法，如果此时包装对象正在等待某些操作完成，
+     *          就会发生死锁。建议在服务初始化阶段调用此方法，避免在运行过程中动态添加wrapper类型资源。
+     */
+    bool addFromConfig(const MCPResourceConfig& resourceConfig, const QMap<QString, QObject*>& dictHandlers = QMap<QString, QObject*>());
 
 private:
     QMap<QString, MCPResource*> m_dictResources;
@@ -166,6 +217,8 @@ private:
     // 订阅管理（基于sessionId）
     QMap<QString, QSet<QString>> m_subscriptions;  // URI -> 会话ID集合
     QMap<QString, QSet<QString>> m_sessionSubscriptions;  // 会话ID -> URI集合
+private:
+    friend class MCPServer;
 };
 
 

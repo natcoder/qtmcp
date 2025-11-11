@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-MCP Server 是一个基于 Qt/C++ 实现的 **Model Context Protocol (MCP)** 服务器框架。该框架提供了完整的 MCP 协议实现，支持通过 HTTP 传输层与 MCP 客户端进行通信，为 AI 应用提供工具、资源和提示词服务。
+MCP Server 是一个基于 Qt/C++ 实现的 **Model Context Protocol (MCP)** 服务器框架。该框架提供了完整的 MCP 协议实现，支持通过 HTTP 传输层与 MCP 客户端进行通信，为 AI 应用提供工具、资源和提示词服务，现处于DEMO阶段。
 
 ### 核心特性
 

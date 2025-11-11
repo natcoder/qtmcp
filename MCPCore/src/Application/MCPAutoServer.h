@@ -66,6 +66,12 @@ public:
      * @deprecated 服务器会持续运行直到程序结束
      */
     void performStop();
+    
+    /**
+     * @brief 加载工具配置文件
+     * @param strToolConfigFile 工具配置文件路径
+     */
+    void loadTool(const QString& strToolConfigFile);
 
 private:
     IMCPServer* m_pServer;           // 服务器实例

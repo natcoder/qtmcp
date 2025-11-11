@@ -63,6 +63,7 @@ bool MCPInvokeHelper::syncInvokeReturn(QObject* pTargetObj, const std::function<
 	return bResult;
 }
 
+
 #include <windows.h>  
 const DWORD MS_VC_EXCEPTION = 0x406D1388;  
 #pragma pack(push,8)  

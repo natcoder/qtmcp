@@ -8,6 +8,7 @@
 
 #pragma once
 #include <QObject>
+#include <QVariant>
 #include <functional>
 #include <QSharedPointer>
 #include <QMetaMethod>
@@ -26,9 +27,18 @@
 class MCPInvokeHelper : public QObject
 {
 	Q_OBJECT
+
+public:
+	template<typename RetType>
+	static RetType syncInvokeReturnT(QObject* pTargetObj, const std::function<RetType()>& fun)
+	{
+		RetType retValue;
+		syncInvoke(pTargetObj, [&retValue, fun]() {retValue = fun();});
+		return retValue;
+	}
 public:
 	// 同步调用返回bool值	
-	static bool syncInvokeReturn(QObject *pTargetObj, const std::function<bool()>& fun);
+	static bool syncInvokeReturn(QObject* pTargetObj, const std::function<bool()>& fun);
 	//
 	static void syncInvoke(QObject *pTargetObj, const std::function<void()>& fun);
 	static void asynInvoke(QObject *pTargetObj, const std::function<void()>& fun);

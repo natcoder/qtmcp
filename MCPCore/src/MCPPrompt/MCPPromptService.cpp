@@ -10,6 +10,7 @@
 #include "MCPPrompt.h"
 #include "MCPLog.h"
 #include "Utils/MCPInvokeHelper.h"
+#include "MCPConfig/MCPPromptsConfig.h"
 
 MCPPromptService::MCPPromptService(QObject* pParent)
     : IMCPPromptService(pParent)
@@ -18,15 +19,6 @@ MCPPromptService::MCPPromptService(QObject* pParent)
 
 MCPPromptService::~MCPPromptService()
 {
-    // 清理所有提示词
-    for (MCPPrompt* pPrompt : m_dictPrompts)
-    {
-        if (pPrompt)
-        {
-            pPrompt->deleteLater();
-        }
-    }
-    m_dictPrompts.clear();
 }
 
 bool MCPPromptService::add(const QString& strName,
@@ -36,7 +28,7 @@ bool MCPPromptService::add(const QString& strName,
 {
     return MCPInvokeHelper::syncInvokeReturn(this, [this, strName, strDescription, arguments, generator]()
     {
-        return doAddImpl(strName, strDescription, arguments, generator);
+        return doAddImpl(strName, strDescription, arguments, generator) != nullptr;
     });
 }
 
@@ -47,7 +39,7 @@ bool MCPPromptService::add(const QString& strName,
 {
     return MCPInvokeHelper::syncInvokeReturn(this, [this, strName, strDescription, arguments, strTemplate]()
     {
-        return doAddImpl(strName, strDescription, arguments, strTemplate);
+        return doAddImpl(strName, strDescription, arguments, strTemplate) != nullptr;
     });
 }
 
@@ -55,10 +47,11 @@ bool MCPPromptService::registerPrompt(MCPPrompt* pPrompt)
 {
     QString strName = pPrompt->getName();
     
+    // 如果已存在，先删除旧的（覆盖），不发送信号，因为后面注册新对象时会发送
     if (m_dictPrompts.contains(strName))
     {
-        MCP_CORE_LOG_WARNING() << "MCPPromptService: 提示词已存在:" << strName;
-        return false;
+        MCP_CORE_LOG_INFO() << "MCPPromptService: 提示词已存在，覆盖旧提示词:" << strName;
+        doRemoveImpl(strName, false);
     }
     
     m_dictPrompts[strName] = pPrompt;
@@ -87,12 +80,10 @@ bool MCPPromptService::has(const QString& strName) const
 
 QJsonArray MCPPromptService::list() const
 {
-    QJsonArray arrResult;
-    MCPInvokeHelper::syncInvoke(const_cast<MCPPromptService*>(this), [this, &arrResult]()
+    return MCPInvokeHelper::syncInvokeReturnT<QJsonArray>(const_cast<MCPPromptService*>(this), [this]()->QJsonArray
     {
-        arrResult = doListImpl();
+        return doListImpl();
     });
-    return arrResult;
 }
 
 QJsonObject MCPPromptService::getPrompt(const QString& strName, const QMap<QString, QString>& arguments)
@@ -105,10 +96,39 @@ QJsonObject MCPPromptService::getPrompt(const QString& strName, const QMap<QStri
     return objResult;
 }
 
-bool MCPPromptService::doAddImpl(const QString& strName,
-                                const QString& strDescription,
-                                const QList<QPair<QString, QPair<QString, bool>>>& arguments,
-                                std::function<QString(const QMap<QString, QString>&)> generator)
+bool MCPPromptService::addFromJson(const QJsonObject& jsonPrompt)
+{
+    return MCPInvokeHelper::syncInvokeReturn(this, [this, jsonPrompt]()
+    {
+        // 将JSON对象转换为MCPPromptConfig
+        MCPPromptConfig promptConfig = MCPPromptConfig::fromJson(jsonPrompt);
+        return addFromConfig(promptConfig);
+    });
+}
+
+bool MCPPromptService::addFromConfig(const MCPPromptConfig& promptConfig)
+{
+    // 转换参数格式
+    QList<QPair<QString, QPair<QString, bool>>> arguments;
+    for (const MCPPromptArgumentConfig& arg : promptConfig.listArguments)
+    {
+        arguments.append(qMakePair(
+            arg.strName,
+            qMakePair(arg.strDescription, arg.bRequired)
+        ));
+    }
+    
+    // 使用模板方式注册（会自动使用默认的模板替换生成器）
+    return doAddImpl(
+        promptConfig.strName,
+        promptConfig.strDescription,
+        arguments,
+        promptConfig.strTemplate) != nullptr;
+}
+
+MCPPrompt* MCPPromptService::createAndConfigurePrompt(const QString& strName,
+                                                       const QString& strDescription,
+                                                       const QList<QPair<QString, QPair<QString, bool>>>& arguments)
 {
     // 创建提示词对象（父对象设为this）
     MCPPrompt* pPrompt = new MCPPrompt(strName, this);
@@ -117,60 +137,53 @@ bool MCPPromptService::doAddImpl(const QString& strName,
     // 添加参数
     for (const auto& arg : arguments)
     {
-        const QString& strArgName = arg.first;
-        const QString& strArgDesc = arg.second.first;
-        bool bRequired = arg.second.second;
-        pPrompt->withArgument(strArgName, strArgDesc, bRequired);
+        pPrompt->withArgument(arg.first, arg.second.first, arg.second.second);
     }
     
+    return pPrompt;
+}
+
+MCPPrompt* MCPPromptService::doAddImpl(const QString& strName,
+                                       const QString& strDescription,
+                                       const QList<QPair<QString, QPair<QString, bool>>>& arguments,
+                                       std::function<QString(const QMap<QString, QString>&)> generator)
+{
+    // 创建并配置提示词对象
+    MCPPrompt* pPrompt = createAndConfigurePrompt(strName, strDescription, arguments);
     pPrompt->withGenerator(generator);
     
     // 注册到服务
-    bool bSuccess = registerPrompt(pPrompt);
-    
-    // 如果注册失败，删除Prompt对象避免内存泄漏
-    if (!bSuccess)
+    if (!registerPrompt(pPrompt))
     {
+        // 如果注册失败，删除Prompt对象避免内存泄漏
         pPrompt->deleteLater();
+        return nullptr;
     }
     
-    return bSuccess;
+    return pPrompt;
 }
 
-bool MCPPromptService::doAddImpl(const QString& strName,
-                                const QString& strDescription,
-                                const QList<QPair<QString, QPair<QString, bool>>>& arguments,
-                                const QString& strTemplate)
+MCPPrompt* MCPPromptService::doAddImpl(const QString& strName,
+                                       const QString& strDescription,
+                                       const QList<QPair<QString, QPair<QString, bool>>>& arguments,
+                                       const QString& strTemplate)
 {
-    // 创建提示词对象（父对象设为this）
-    MCPPrompt* pPrompt = new MCPPrompt(strName, this);
-    pPrompt->withDescription(strDescription);
-    
-    // 添加参数
-    for (const auto& arg : arguments)
-    {
-        const QString& strArgName = arg.first;
-        const QString& strArgDesc = arg.second.first;
-        bool bRequired = arg.second.second;
-        pPrompt->withArgument(strArgName, strArgDesc, bRequired);
-    }
-    
-    // 设置模板（会自动使用默认的模板替换生成器）
+    // 创建并配置提示词对象
+    MCPPrompt* pPrompt = createAndConfigurePrompt(strName, strDescription, arguments);
     pPrompt->withTemplate(strTemplate);
     
     // 注册到服务
-    bool bSuccess = registerPrompt(pPrompt);
-    
-    // 如果注册失败，删除Prompt对象避免内存泄漏
-    if (!bSuccess)
+    if (!registerPrompt(pPrompt))
     {
+        // 如果注册失败，删除Prompt对象避免内存泄漏
         pPrompt->deleteLater();
+        return nullptr;
     }
     
-    return bSuccess;
+    return pPrompt;
 }
 
-bool MCPPromptService::doRemoveImpl(const QString& strName)
+bool MCPPromptService::doRemoveImpl(const QString& strName, bool bEmitSignal)
 {
     if (!m_dictPrompts.contains(strName))
     {
@@ -185,8 +198,11 @@ bool MCPPromptService::doRemoveImpl(const QString& strName)
     }
     
     MCP_CORE_LOG_INFO() << "MCPPromptService: 提示词已注销:" << strName;
-    emit promptChanged(strName);
-    emit promptsListChanged();
+    if (bEmitSignal)
+    {
+        emit promptChanged(strName);
+        emit promptsListChanged();
+    }
     return true;
 }
 

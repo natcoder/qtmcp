@@ -11,6 +11,8 @@
 #include <QJsonDocument>
 #include <QDateTime>
 #include <QVariant>
+#include "IMCPServer.h"
+#include <QCoreApplication>
 MyResourceHandler::MyResourceHandler(QObject* pParent)
     : QObject(pParent)
     , m_strName("示例资源")
@@ -90,5 +92,12 @@ void MyResourceHandler::onTimerTimeout()
     
     // 更新内容并发出changed信号
     updateContent(strNewContent);
+
+
+    //if (m_nUpdateCount % 5 == 0)
+    {
+        QString strToolConfigFilePath = QCoreApplication::applicationDirPath() + "/MCPServerConfig/Tools/calculator.json";
+        LoadAutoMCPServerTool(strToolConfigFilePath.toUtf8().data());
+    }
 }
 

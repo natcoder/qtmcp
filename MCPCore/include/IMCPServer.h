@@ -82,7 +82,6 @@ public:
      * @code
      * auto pConfig = pServer->getConfig();
      * pConfig->setServerName("My Server");
-     * pConfig->saveToDirectory("MCPServerConfig");
      * @endcode
      */
     virtual IMCPServerConfig* getConfig() = 0;
@@ -150,5 +149,7 @@ protected:
     virtual ~IMCPServer() override;
 };
 
+
 extern "C" MCPCORE_EXPORT void __stdcall  StartAutoMCPServer();
+extern "C" MCPCORE_EXPORT void __stdcall  LoadAutoMCPServerTool(const char* szToolConfigFile);
 extern "C" MCPCORE_EXPORT void __stdcall  StopAutoMCPServer();
